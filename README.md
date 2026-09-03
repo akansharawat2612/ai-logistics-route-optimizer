@@ -6,6 +6,12 @@ The project combines **Machine Learning, route optimization, real road routing, 
 
 ---
 
+## 🚀 Live Demo
+
+👉 [Try the AI Logistics Route Optimizer](https://ai-logistics-route-optimizer-4qvoajfacqmdffsclnuk9n.streamlit.app/)
+
+---
+
 ## 🧠 Project Overview
 
 Logistics companies need to deliver packages efficiently while dealing with uncertain conditions such as traffic, weather, package weight, and delivery distance.
