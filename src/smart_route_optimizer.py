@@ -6,70 +6,57 @@ from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 # GEOCODING
 # =========================================================
 
-def geocode_location(address):
 
+def geocode_location(address):
     url = "https://nominatim.openstreetmap.org/search"
 
-    search_query = f"{address}, India"
-
-    params = {
-        "q": search_query,
-        "format": "json",
-        "limit": 5,
-        "countrycodes": "in",
-        "addressdetails": 1
-    }
+    search_queries = [
+        address,
+        f"{address}, Dehradun, Uttarakhand, India",
+        f"{address}, Uttarakhand, India",
+        f"{address}, India"
+    ]
 
     headers = {
         "User-Agent": "AI-Logistics-Route-Optimizer/1.0"
     }
 
-    try:
+    for search_query in search_queries:
+        params = {
+            "q": search_query,
+            "format": "json",
+            "limit": 5,
+            "countrycodes": "in",
+            "addressdetails": 1
+        }
 
-        response = requests.get(
-            url,
-            params=params,
-            headers=headers,
-            timeout=10
-        )
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=10
+            )
 
-        response.raise_for_status()
+            response.raise_for_status()
+            data = response.json()
 
-        data = response.json()
+            if data:
+                for result in data:
+                    result_address = result.get("address", {})
+                    country = result_address.get(
+                        "country",
+                        ""
+                    ).lower()
 
-        if data:
+                    if country == "india":
+                        latitude = float(result["lat"])
+                        longitude = float(result["lon"])
 
-            for result in data:
+                        return latitude, longitude
 
-                result_address = result.get(
-                    "address",
-                    {}
-                )
-
-                country = result_address.get(
-                    "country",
-                    ""
-                ).lower()
-
-                if country == "india":
-
-                    latitude = float(
-                        result["lat"]
-                    )
-
-                    longitude = float(
-                        result["lon"]
-                    )
-
-                    return latitude, longitude
-
-            latitude = float(data[0]["lat"])
-            longitude = float(data[0]["lon"])
-
-            return latitude, longitude
-
-    except Exception:
-        pass
+        except Exception:
+            continue
 
     return None
 
