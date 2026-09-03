@@ -4,304 +4,798 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from src.smart_route_optimizer import (
-    optimize_route,
-    get_road_geometry
+    geocode_location,
+    get_road_distance,
+    get_road_geometry,
+    optimize_route
 )
 
 
-# ============================================================
-# PAGE CONFIGURATION
-# ============================================================
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 
 st.set_page_config(
-    page_title="AI Logistics Optimizer",
+    page_title="AI Logistics Route Optimizer",
     page_icon="🚚",
     layout="wide"
 )
 
 
-# ============================================================
-# CUSTOM STYLING
-# ============================================================
+# =========================================================
+# TITLE
+# =========================================================
 
-st.markdown(
-    """
-    <style>
+st.title("🚚 AI Logistics Route Optimizer")
 
-    .main-title {
-        font-size: 42px;
-        font-weight: 700;
-        margin-bottom: 5px;
-    }
-
-    .subtitle {
-        font-size: 18px;
-        color: #9ca3af;
-        margin-bottom: 30px;
-    }
-
-    .section-title {
-        font-size: 24px;
-        font-weight: 600;
-        margin-top: 20px;
-    }
-
-    .route-box {
-        padding: 22px;
-        border-radius: 12px;
-        border: 1px solid #333842;
-        background-color: #17191f;
-        margin-top: 10px;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True
+st.caption(
+    "AI-powered delivery delay prediction and intelligent route optimization"
 )
 
 
-# ============================================================
-# LOAD MACHINE LEARNING MODEL
-# ============================================================
+# =========================================================
+# LOAD MODEL
+# =========================================================
 
-model = joblib.load("src/delay_model.pkl")
+@st.cache_resource
+def load_model():
 
-
-# ============================================================
-# LOCATION COORDINATES
-# ============================================================
-
-coordinates = {
-    "Warehouse": (30.3165, 78.0322),
-    "ISBT Dehradun": (30.2850, 78.0080),
-    "Clock Tower": (30.3256, 78.0437),
-    "Prem Nagar": (30.3510, 77.9630),
-    "Rajpur Road": (30.3600, 78.0800)
-}
+    return joblib.load(
+        "src/delay_model.pkl"
+    )
 
 
-# ============================================================
-# HEADER
-# ============================================================
+try:
 
-st.markdown(
-    '<div class="main-title">🚚 AI Logistics Optimizer</div>',
-    unsafe_allow_html=True
+    model = load_model()
+
+except Exception as e:
+
+    st.error(
+        "Could not load the delay prediction model."
+    )
+
+    st.write(e)
+
+    st.stop()
+
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+
+if "delivery_count" not in st.session_state:
+
+    st.session_state.delivery_count = 1
+
+
+# =========================================================
+# LOCATIONS
+# =========================================================
+
+st.header("📍 Delivery Locations")
+
+
+pickup = st.text_input(
+    "🏭 Pickup / Warehouse",
+    key="pickup_location"
 )
 
-st.markdown(
-    '<div class="subtitle">'
-    'AI-powered delivery delay prediction and smart route optimization'
-    '</div>',
-    unsafe_allow_html=True
-)
 
-st.divider()
+st.subheader("🏠 Delivery Locations")
 
 
-# ============================================================
-# DELIVERY INFORMATION
-# ============================================================
+delivery_locations = []
 
-st.markdown(
-    '<div class="section-title">📦 Delivery Information</div>',
-    unsafe_allow_html=True
-)
 
-st.write("Enter the details of the delivery below.")
+for i in range(
+    st.session_state.delivery_count
+):
 
-col1, col2 = st.columns(2)
+    location = st.text_input(
+        f"Delivery Location {i + 1}",
+        key=f"delivery_{i}"
+    )
+
+    delivery_locations.append(
+        location.strip()
+    )
+
+
+# =========================================================
+# ADD DELIVERY
+# =========================================================
+
+if st.button(
+    "➕ Add delivery location",
+    use_container_width=True
+):
+
+    st.session_state.delivery_count += 1
+
+    st.rerun()
+
+
+# =========================================================
+# CONDITIONS
+# =========================================================
+
+st.header("🌦️ Delivery Conditions")
+
+
+col1, col2, col3 = st.columns(3)
 
 
 with col1:
 
-    distance = st.number_input(
-        "Distance (km)",
-        min_value=1.0,
-        max_value=500.0,
-        value=75.0
-    )
-
     traffic = st.selectbox(
-        "Traffic",
-        ["Low", "Medium", "High"]
-    )
-
-    weather = st.selectbox(
-        "Weather",
-        ["Clear", "Cloudy", "Rainy"]
+        "🚦 Traffic",
+        [
+            "Low",
+            "Medium",
+            "High"
+        ]
     )
 
 
 with col2:
 
-    vehicle = st.selectbox(
-        "Vehicle",
-        ["Bike", "Van", "Truck"]
-    )
-
-    weight = st.number_input(
-        "Package Weight (kg)",
-        min_value=0.5,
-        max_value=100.0,
-        value=15.0
-    )
-
-    time_of_day = st.selectbox(
-        "Time of Day",
-        ["Morning", "Afternoon", "Evening"]
-    )
-
-
-st.write("")
-
-
-# ============================================================
-# OPTIMIZE BUTTON
-# ============================================================
-
-optimize = st.button(
-    "🚀 Optimize Delivery",
-    use_container_width=True
-)
-
-
-# ============================================================
-# RUN AI SYSTEM
-# ============================================================
-
-if optimize:
-
-    delivery = pd.DataFrame(
+    weather = st.selectbox(
+        "🌧️ Weather",
         [
-            {
-                "distance_km": distance,
-                "traffic": traffic,
-                "weather": weather,
-                "vehicle": vehicle,
-                "package_weight_kg": weight,
-                "time_of_day": time_of_day
-            }
+            "Clear",
+            "Cloudy",
+            "Rainy"
         ]
     )
 
 
-    # ========================================================
-    # ML PREDICTION
-    # ========================================================
+with col3:
 
-    delay_probability = model.predict_proba(delivery)[0][1]
+    vehicle = st.selectbox(
+        "🚐 Vehicle",
+        [
+            "Bike",
+            "Car",
+            "Van",
+            "Truck"
+        ]
+    )
 
-    prediction = model.predict(delivery)[0]
+
+col4, col5 = st.columns(2)
 
 
-    # ========================================================
-    # ROUTE OPTIMIZATION
-    # ========================================================
+with col4:
+
+    package_weight = st.number_input(
+        "📦 Package Weight (kg)",
+        min_value=0.0,
+        value=10.0,
+        step=1.0
+    )
+
+
+with col5:
+
+    time_of_day = st.selectbox(
+        "🕐 Time of Day",
+        [
+            "Morning",
+            "Afternoon",
+            "Evening",
+            "Night"
+        ]
+    )
+
+
+# =========================================================
+# OPTIMIZE BUTTON
+# =========================================================
+
+st.write("")
+
+
+optimize_button = st.button(
+    "🚀 Optimize Delivery Route",
+    use_container_width=True,
+    type="primary"
+)
+
+
+# =========================================================
+# OPTIMIZATION
+# =========================================================
+
+if optimize_button:
+
+    # -----------------------------------------------------
+    # VALIDATION
+    # -----------------------------------------------------
+
+    if not pickup.strip():
+
+        st.error(
+            "Please enter a pickup / warehouse location."
+        )
+
+        st.stop()
+
+
+    valid_deliveries = [
+        location
+        for location in delivery_locations
+        if location.strip()
+    ]
+
+
+    if len(valid_deliveries) == 0:
+
+        st.error(
+            "Please enter at least one delivery location."
+        )
+
+        st.stop()
+
+
+    # -----------------------------------------------------
+    # LOCATIONS
+    # -----------------------------------------------------
+
+    pickup_name = pickup.strip()
+
+    location_names = [
+        pickup_name
+    ] + valid_deliveries
+
+
+    # -----------------------------------------------------
+    # GEOCODING
+    # -----------------------------------------------------
+
+    st.info(
+        "📍 Finding locations and calculating real road routes..."
+    )
+
+
+    coordinates = {}
+
+    progress = st.progress(0)
+
+    failed = False
+
+
+    for index, location in enumerate(
+        location_names
+    ):
+
+        result = geocode_location(
+            location
+        )
+
+
+        if result is None:
+
+            st.error(
+                f"❌ Could not find: {location}"
+            )
+
+            st.warning(
+                "Try entering the location together "
+                "with its city."
+            )
+
+            failed = True
+
+            break
+
+
+        coordinates[location] = result
+
+
+        progress.progress(
+            int(
+                (
+                    (index + 1)
+                    / len(location_names)
+                )
+                * 100
+            )
+        )
+
+
+    progress.empty()
+
+
+    if failed:
+
+        st.stop()
+
+
+    # =====================================================
+    # ML DISTANCE
+    # =====================================================
+
+    distances = []
+
+
+    for delivery in valid_deliveries:
+
+        distance = get_road_distance(
+            pickup_name,
+            delivery,
+            coordinates
+        )
+
+        distances.append(
+            distance
+        )
+
+
+    average_distance = (
+        sum(distances) / len(distances)
+        if distances
+        else 0
+    )
+
+
+    # =====================================================
+    # ML INPUT
+    # =====================================================
+
+    input_data = pd.DataFrame(
+        {
+            "distance_km": [
+                average_distance
+            ],
+
+            "traffic": [
+                traffic
+            ],
+
+            "weather": [
+                weather
+            ],
+
+            "vehicle": [
+                vehicle
+            ],
+
+            "package_weight_kg": [
+                package_weight
+            ],
+
+            "time_of_day": [
+                time_of_day
+            ]
+        }
+    )
+
+
+    # =====================================================
+    # PREDICTION
+    # =====================================================
+
+    prediction_probability = (
+        model.predict_proba(
+            input_data
+        )[0][1]
+    )
+
+
+    delay_prediction = model.predict(
+        input_data
+    )[0]
+
+
+    delay_probability = float(
+        prediction_probability
+    )
+
+
+    if delay_prediction == 1:
+
+        prediction_text = "DELAYED"
+
+    else:
+
+        prediction_text = "ON TIME"
+
+
+    # =====================================================
+    # OPTIMIZE ROUTE
+    # =====================================================
 
     route, route_cost = optimize_route(
-        traffic=traffic,
-        weather=weather,
-        delay_probability=delay_probability
+        location_names,
+        coordinates,
+        traffic,
+        weather,
+        delay_probability
     )
 
 
-    # ========================================================
-    # ROUTE MAP
-    # ========================================================
+    if not route:
 
-    st.markdown(
-        '<div class="section-title">🗺️ Optimized Route Map</div>',
-        unsafe_allow_html=True
-    )
+        st.error(
+            "Unable to calculate an optimized route."
+        )
 
-    # Get actual road geometry from OSRM
-    road_latitudes = []
-    road_longitudes = []
+        st.stop()
 
-    for i in range(len(route) - 1):
+
+    # =====================================================
+    # ACTUAL ROAD DISTANCE
+    # =====================================================
+
+    total_distance = 0.0
+
+
+    for i in range(
+        len(route) - 1
+    ):
 
         start = route[i]
+
         end = route[i + 1]
 
-        road_points = get_road_geometry(start, end)
 
-        for latitude, longitude in road_points:
-            road_latitudes.append(latitude)
-            road_longitudes.append(longitude)
+        distance = get_road_distance(
+            start,
+            end,
+            coordinates
+        )
 
 
-    # Create map
+        total_distance += distance
+
+
+    # =====================================================
+    # RESULTS
+    # =====================================================
+
+    st.divider()
+
+    st.header("📊 Route Summary")
+
+
+    metric1, metric2, metric3, metric4 = (
+        st.columns(4)
+    )
+
+
+    with metric1:
+
+        st.metric(
+            "Delivery Stops",
+            len(valid_deliveries)
+        )
+
+
+    with metric2:
+
+        st.metric(
+            "Total Road Distance",
+            f"{total_distance:.2f} km"
+        )
+
+
+    with metric3:
+
+        st.metric(
+            "Delay Probability",
+            f"{delay_probability * 100:.1f}%"
+        )
+
+
+    with metric4:
+
+        if delay_prediction == 1:
+
+            st.metric(
+                "AI Prediction",
+                "🔴 DELAYED"
+            )
+
+        else:
+
+            st.metric(
+                "AI Prediction",
+                "🟢 ON TIME"
+            )
+
+
+    # =====================================================
+    # ROUTE ORDER
+    # =====================================================
+
+    st.header("🧭 Optimized Route")
+
+
+    for i, location in enumerate(route):
+
+        if i == 0:
+
+            st.write(
+                f"🏭 **Pickup:** {location}"
+            )
+
+        else:
+
+            st.write(
+                f"➡️ **Delivery {i}:** {location}"
+            )
+
+
+    # =====================================================
+    # MAP
+    # =====================================================
+
+    st.header("🗺️ Optimized Road Route")
+
+
+    route_colors = [
+        "#00E5FF",
+        "#FF4B91",
+        "#FFD166",
+        "#7CFF6B",
+        "#B388FF",
+        "#FF8C42",
+        "#00FFB3",
+        "#FF6B6B",
+        "#4D96FF",
+        "#F72585"
+    ]
+
+
     fig = go.Figure()
 
 
-    # ========================================================
-    # ACTUAL ROAD ROUTE
-    # ========================================================
+    # =====================================================
+    # ROUTE LINES
+    # =====================================================
 
-    fig.add_trace(
-        go.Scattermap(
-            lat=road_latitudes,
-            lon=road_longitudes,
-            mode="lines",
-            line=dict(width=5),
-            name="Optimized Route"
+    for i in range(
+        len(route) - 1
+    ):
+
+        start = route[i]
+
+        end = route[i + 1]
+
+
+        geometry = get_road_geometry(
+            start,
+            end,
+            coordinates
         )
+
+
+        latitudes = [
+            point[0]
+            for point in geometry
+        ]
+
+
+        longitudes = [
+            point[1]
+            for point in geometry
+        ]
+
+
+        # The color corresponds to the
+        # destination delivery.
+
+        line_color = route_colors[
+            i % len(route_colors)
+        ]
+
+
+        fig.add_trace(
+            go.Scattermap(
+                lat=latitudes,
+                lon=longitudes,
+
+                mode="lines",
+
+                line=dict(
+                    width=8,
+                    color=line_color
+                ),
+
+                name=f"Delivery {i + 1}",
+
+                hovertemplate=(
+                    f"{start} → {end}"
+                    "<extra></extra>"
+                )
+            )
+        )
+
+
+    # =====================================================
+    # DELIVERY MARKERS
+    # =====================================================
+
+    for i, location in enumerate(
+        valid_deliveries
+    ):
+
+        latitude, longitude = (
+            coordinates[location]
+        )
+
+
+        marker_color = route_colors[
+            i % len(route_colors)
+        ]
+
+
+        fig.add_trace(
+            go.Scattermap(
+                lat=[latitude],
+                lon=[longitude],
+
+                mode="markers+text",
+
+                marker=dict(
+                    size=17,
+                    color=marker_color
+                ),
+
+                text=[
+                    f"Delivery {i + 1}"
+                ],
+
+                textposition="top right",
+
+                name=f"Delivery {i + 1}",
+
+                hovertemplate=(
+                    f"<b>Delivery {i + 1}</b>"
+                    f"<br>{location}"
+                    "<extra></extra>"
+                ),
+
+                showlegend=True
+            )
+        )
+
+
+    # =====================================================
+    # PICKUP MARKER
+    # =====================================================
+
+    warehouse_lat, warehouse_lon = (
+        coordinates[pickup_name]
     )
 
 
-    # ========================================================
-    # LOCATION MARKERS
-    # ========================================================
-
-    marker_latitudes = []
-    marker_longitudes = []
-    marker_labels = []
-
-    for location in route:
-
-        latitude, longitude = coordinates[location]
-
-        marker_latitudes.append(latitude)
-        marker_longitudes.append(longitude)
-        marker_labels.append(location)
-
-
     fig.add_trace(
         go.Scattermap(
-            lat=marker_latitudes,
-            lon=marker_longitudes,
+            lat=[warehouse_lat],
+            lon=[warehouse_lon],
+
             mode="markers+text",
-            marker=dict(size=12),
-            text=marker_labels,
-            textposition="top right",
-            hoverinfo="text",
-            name="Locations"
+
+            marker=dict(
+                size=22,
+                color="white"
+            ),
+
+            text=[
+                "🏭 Pickup"
+            ],
+
+            textposition="bottom right",
+
+            name="Pickup / Warehouse",
+
+            hovertemplate=(
+                f"<b>Pickup</b>"
+                f"<br>{pickup_name}"
+                "<extra></extra>"
+            ),
+
+            showlegend=True
         )
     )
 
 
-    # ========================================================
-    # MAP SETTINGS
-    # ========================================================
+    # =====================================================
+    # MAP CENTER
+    # =====================================================
+
+    all_latitudes = [
+        coordinates[location][0]
+        for location in location_names
+    ]
+
+
+    all_longitudes = [
+        coordinates[location][1]
+        for location in location_names
+    ]
+
+
+    center_lat = (
+        min(all_latitudes)
+        + max(all_latitudes)
+    ) / 2
+
+
+    center_lon = (
+        min(all_longitudes)
+        + max(all_longitudes)
+    ) / 2
+
+
+    # =====================================================
+    # MAP ZOOM
+    # =====================================================
+
+    max_range = max(
+        max(all_latitudes) - min(all_latitudes),
+        max(all_longitudes) - min(all_longitudes)
+    )
+
+
+    if max_range < 0.01:
+
+        zoom_level = 14
+
+    elif max_range < 0.03:
+
+        zoom_level = 12
+
+    elif max_range < 0.08:
+
+        zoom_level = 10
+
+    elif max_range < 0.2:
+
+        zoom_level = 8
+
+    else:
+
+        zoom_level = 6
+
+
+    # =====================================================
+    # MAP
+    # =====================================================
 
     fig.update_layout(
+
         map=dict(
             style="open-street-map",
+
             center=dict(
-                lat=30.32,
-                lon=78.03
+                lat=center_lat,
+                lon=center_lon
             ),
-            zoom=11
+
+            zoom=zoom_level
         ),
-        height=550,
+
+        height=650,
+
         margin=dict(
             l=0,
             r=0,
             t=0,
             b=0
         ),
-        showlegend=True
+
+        paper_bgcolor="#0e1117",
+
+        legend=dict(
+            title="Route Legend",
+            font=dict(
+                color="white"
+            ),
+            bgcolor="#171b24"
+        )
     )
 
 
@@ -311,391 +805,148 @@ if optimize:
     )
 
 
-    # ========================================================
-    # ROUTE DETAILS
-    # ========================================================
+    # =====================================================
+    # ROUTE LEGEND
+    # =====================================================
 
-    st.markdown("### 🛣️ Optimized Route")
-
-    if route:
-
-        route_text = " → ".join(route)
-
-        st.info(
-            f"**{route_text}**"
-        )
-
-        st.caption(
-            f"Total optimized route cost: {route_cost}"
-        )
-
-    else:
-
-        st.error("No suitable route found.")
+    st.subheader("🎨 Route Legend")
 
 
-    # ========================================================
-    # DELIVERY ANALYSIS
-    # ========================================================
+    for i, location in enumerate(
+        valid_deliveries
+    ):
 
-    st.markdown(
-        '<div class="section-title">📊 Delivery Analysis</div>',
-        unsafe_allow_html=True
-    )
+        color = route_colors[
+            i % len(route_colors)
+        ]
 
-
-    prediction_text = (
-        "DELAYED"
-        if prediction == 1
-        else "ON TIME"
-    )
-
-
-    result1, result2, result3 = st.columns(3)
-
-
-    with result1:
-
-        st.metric(
-            "🎯 Delay Probability",
-            f"{delay_probability * 100:.1f}%"
-        )
-
-
-    with result2:
-
-        st.metric(
-            "🤖 ML Prediction",
-            prediction_text
-        )
-
-
-    with result3:
-
-        st.metric(
-            "🛣️ Route Cost",
-            route_cost
-        )
-
-
-    st.write("")
-
-
-    # ========================================================
-    # RISK ASSESSMENT
-    # ========================================================
-
-    if delay_probability >= 0.7:
-
-        st.error(
-            "🔴 HIGH DELAY RISK\n\n"
-            "The AI model predicts a high probability of delay. "
-            "The smart route has been optimized for the current conditions."
-        )
-
-    elif delay_probability >= 0.4:
-
-        st.warning(
-            "🟠 MODERATE DELAY RISK\n\n"
-            "There is a moderate possibility of delay. "
-            "Keep an eye on traffic and weather conditions."
-        )
-
-    else:
-
-        st.success(
-            "🟢 LOW DELAY RISK\n\n"
-            "Current delivery conditions look favorable."
-        )
-
-
-    # ========================================================
-    # RECOMMENDED ROUTE
-    # ========================================================
-
-    st.markdown(
-        '<div class="section-title">📍 Recommended Route</div>',
-        unsafe_allow_html=True
-    )
-
-
-    if route:
 
         st.markdown(
-            '<div class="route-box">',
+            f"""
+            <span style="
+                display:inline-block;
+                width:16px;
+                height:16px;
+                background-color:{color};
+                border-radius:50%;
+                margin-right:8px;
+            "></span>
+            <b>Delivery {i + 1}</b> — {location}
+            """,
             unsafe_allow_html=True
         )
 
-        for i, location in enumerate(route):
 
-            if location == "Warehouse":
-                icon = "🏭"
-            else:
-                icon = "📍"
+    st.markdown(
+        """
+        <span style="
+            display:inline-block;
+            width:16px;
+            height:16px;
+            background-color:white;
+            border-radius:50%;
+            margin-right:8px;
+        "></span>
+        <b>Pickup / Warehouse</b>
+        """,
+        unsafe_allow_html=True
+    )
 
-            st.markdown(
-                f"### {icon} {location}"
+
+    # =====================================================
+    # CONDITIONS
+    # =====================================================
+
+    st.header("🌦️ Current Delivery Conditions")
+
+
+    condition1, condition2, condition3 = (
+        st.columns(3)
+    )
+
+
+    with condition1:
+
+        st.markdown(
+            "### 🚦 Traffic"
             )
 
-            if i < len(route) - 1:
-                st.markdown("⬇️")
+        st.info(traffic)
+
+
+    with condition2:
 
         st.markdown(
-            "</div>",
-            unsafe_allow_html=True
+            "### 🌧️ Weather"
+            )
+
+        st.info(weather)
+
+
+    with condition3:
+
+        st.markdown(
+            "### 🚐 Vehicle"
         )
 
-    else:
-
-        st.error("No suitable route found.")
+        st.info(vehicle)
 
 
-    st.write("")
+    # =====================================================
+    # AI RISK
+    # =====================================================
+
+    st.header("🤖 AI Delay Risk Analysis")
 
 
-    # ========================================================
-    # DELIVERY CONDITIONS
-    # ========================================================
+    risk_data = pd.DataFrame(
+        {
+            "Status": [
+                "On Time",
+                "Delayed"
+            ],
 
-    st.markdown(
-        '<div class="section-title">🚦 Delivery Conditions</div>',
-        unsafe_allow_html=True
+            "Probability": [
+                1 - delay_probability,
+                delay_probability
+            ]
+        }
     )
 
 
-    info1, info2, info3, info4 = st.columns(4)
+    fig_risk = go.Figure()
 
 
-    with info1:
-
-        st.metric(
-            "Traffic",
-            traffic
-        )
-
-
-    with info2:
-
-        st.metric(
-            "Weather",
-            weather
-        )
-
-
-    with info3:
-
-        st.metric(
-            "Vehicle",
-            vehicle
-        )
-
-
-    with info4:
-
-        st.metric(
-            "Distance",
-            f"{distance:.1f} km"
-        )
-
-
-    # ========================================================
-    # DELIVERY INSIGHTS
-    # ========================================================
-
-    st.divider()
-
-    st.markdown(
-        '<div class="section-title">💡 Delivery Insights</div>',
-        unsafe_allow_html=True
-    )
-
-    st.write(
-        "The following operational signals are based on the "
-        "current delivery conditions."
-    )
-
-
-    insight1, insight2 = st.columns(2)
-
-
-    # ========================================================
-    # TRAFFIC INSIGHT
-    # ========================================================
-
-    with insight1:
-
-        if traffic == "High":
-            traffic_risk = "🔴 High"
-        elif traffic == "Medium":
-            traffic_risk = "🟠 Medium"
-        else:
-            traffic_risk = "🟢 Low"
-
-        st.metric(
-            "🚦 Traffic Risk",
-            traffic_risk
-        )
-
-
-    # ========================================================
-    # WEATHER INSIGHT
-    # ========================================================
-
-    with insight2:
-
-        if weather == "Rainy":
-            weather_risk = "🔴 High"
-        elif weather == "Cloudy":
-            weather_risk = "🟠 Medium"
-        else:
-            weather_risk = "🟢 Low"
-
-        st.metric(
-            "🌦️ Weather Risk",
-            weather_risk
-        )
-
-
-    insight3, insight4 = st.columns(2)
-
-
-    # ========================================================
-    # DISTANCE INSIGHT
-    # ========================================================
-
-    with insight3:
-
-        if distance > 60:
-            distance_risk = "🔴 Long"
-        elif distance > 30:
-            distance_risk = "🟠 Moderate"
-        else:
-            distance_risk = "🟢 Short"
-
-        st.metric(
-            "📏 Distance",
-            f"{distance:.1f} km"
-        )
-
-        st.caption(
-            f"Distance category: {distance_risk}"
-        )
-
-
-    # ========================================================
-    # PACKAGE WEIGHT INSIGHT
-    # ========================================================
-
-    with insight4:
-
-        if weight > 20:
-            weight_risk = "🔴 Heavy"
-        elif weight > 10:
-            weight_risk = "🟠 Medium"
-        else:
-            weight_risk = "🟢 Light"
-
-        st.metric(
-            "📦 Package Weight",
-            f"{weight:.1f} kg"
-        )
-
-        st.caption(
-            f"Weight category: {weight_risk}"
-        )
-
-
-        # ========================================================
-    # DELAY RISK VISUALIZATION
-    # ========================================================
-
-    st.write("")
-
-    st.markdown("### ⚠️ Overall Delay Risk")
-
-    st.progress(
-        int(delay_probability * 100)
-    )
-
-    st.write(
-        f"Current estimated delay probability: "
-        f"**{delay_probability * 100:.1f}%**"
-    )
-
-
-    # ========================================================
-    # RISK FACTOR OVERVIEW
-    # ========================================================
-
-    st.markdown("### 📊 Risk Factor Overview")
-
-    # Convert operational conditions into risk scores
-    traffic_score = {
-        "Low": 20,
-        "Medium": 55,
-        "High": 90
-    }[traffic]
-
-    weather_score = {
-        "Clear": 20,
-        "Cloudy": 50,
-        "Rainy": 85
-    }[weather]
-
-    if distance > 60:
-        distance_score = 90
-    elif distance > 30:
-        distance_score = 55
-    else:
-        distance_score = 20
-
-    if weight > 20:
-        weight_score = 90
-    elif weight > 10:
-        weight_score = 55
-    else:
-        weight_score = 20
-
-    ai_score = int(delay_probability * 100)
-
-
-    # Create chart
-    risk_fig = go.Figure()
-
-    risk_fig.add_trace(
+    fig_risk.add_trace(
         go.Bar(
-            x=[
-                "Traffic",
-                "Weather",
-                "Distance",
-                "Package Weight",
-                "AI Delay Risk"
-            ],
-            y=[
-                traffic_score,
-                weather_score,
-                distance_score,
-                weight_score,
-                ai_score
-            ],
+            x=risk_data["Status"],
+
+            y=(
+                risk_data["Probability"]
+                * 100
+            ),
+
             text=[
-                f"{traffic_score}%",
-                f"{weather_score}%",
-                f"{distance_score}%",
-                f"{weight_score}%",
-                f"{ai_score}%"
+                f"{value * 100:.1f}%"
+                for value
+                in risk_data["Probability"]
             ],
+
             textposition="auto"
         )
     )
 
-    risk_fig.update_layout(
-        yaxis=dict(
-            title="Risk Score",
-            range=[0, 100]
-        ),
-        xaxis_title="Operational Factor",
-        height=400,
+
+    fig_risk.update_layout(
+        yaxis_title="Probability (%)",
+
+        yaxis_range=[
+            0,
+            100
+        ],
+
+        height=350,
+
         margin=dict(
             l=20,
             r=20,
@@ -704,34 +955,54 @@ if optimize:
         )
     )
 
+
     st.plotly_chart(
-        risk_fig,
+        fig_risk,
         use_container_width=True
     )
 
 
-    # ========================================================
-    # FINAL RECOMMENDATION
-    # ========================================================
+    # =====================================================
+    # AI RECOMMENDATION
+    # =====================================================
 
-    st.markdown("### 🧠 AI Recommendation")
+    st.header("💡 AI Recommendation")
 
-    if delay_probability >= 0.7:
+
+    if delay_probability >= 0.70:
 
         st.warning(
-            "The system recommends prioritizing this delivery. "
-            "High-risk conditions may increase the chance of delay."
+            "⚠️ High delay risk detected. "
+            "Consider leaving earlier, using an "
+            "alternate route, or prioritizing "
+            "these deliveries."
         )
 
-    elif delay_probability >= 0.4:
 
-        st.info(
-            "The delivery has moderate operational risk. "
-            "Monitoring traffic and weather conditions is recommended."
+    elif delay_probability >= 0.40:
+
+        st.warning(
+            "🟡 Moderate delay risk detected. "
+            "Keep some additional delivery time "
+            "as a buffer."
         )
+
 
     else:
 
         st.success(
-            "The delivery currently has relatively low operational risk."
+            "🟢 Low delay risk detected. "
+            "Current conditions appear suitable "
+            "for the planned route."
         )
+
+
+    # =====================================================
+    # DISCLAIMER
+    # =====================================================
+
+    st.caption(
+        "Note: The delay prediction model is trained "
+        "on a synthetic dataset for demonstration "
+        "and portfolio purposes."
+    )

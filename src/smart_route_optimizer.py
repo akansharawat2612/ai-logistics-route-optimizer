@@ -2,42 +2,92 @@ import requests
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
 
-# ============================================================
-# DEHRADUN LOCATIONS
-# ============================================================
+# =========================================================
+# GEOCODING
+# =========================================================
 
-locations = [
-    "Warehouse",
-    "ISBT Dehradun",
-    "Clock Tower",
-    "Prem Nagar",
-    "Rajpur Road"
-]
+def geocode_location(address):
+
+    url = "https://nominatim.openstreetmap.org/search"
+
+    search_query = f"{address}, India"
+
+    params = {
+        "q": search_query,
+        "format": "json",
+        "limit": 5,
+        "countrycodes": "in",
+        "addressdetails": 1
+    }
+
+    headers = {
+        "User-Agent": "AI-Logistics-Route-Optimizer/1.0"
+    }
+
+    try:
+
+        response = requests.get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=10
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        if data:
+
+            for result in data:
+
+                result_address = result.get(
+                    "address",
+                    {}
+                )
+
+                country = result_address.get(
+                    "country",
+                    ""
+                ).lower()
+
+                if country == "india":
+
+                    latitude = float(
+                        result["lat"]
+                    )
+
+                    longitude = float(
+                        result["lon"]
+                    )
+
+                    return latitude, longitude
+
+            latitude = float(data[0]["lat"])
+            longitude = float(data[0]["lon"])
+
+            return latitude, longitude
+
+    except Exception:
+        pass
+
+    return None
 
 
-# Coordinates: latitude, longitude
-coordinates = {
-    "Warehouse": (30.3165, 78.0322),
-    "ISBT Dehradun": (30.2850, 78.0080),
-    "Clock Tower": (30.3256, 78.0437),
-    "Prem Nagar": (30.3510, 77.9630),
-    "Rajpur Road": (30.3600, 78.0800)
-}
+# =========================================================
+# ROAD DISTANCE
+# =========================================================
 
-
-# ============================================================
-# GET ROAD DISTANCE FROM OSRM
-# ============================================================
-
-def get_road_distance(start, end):
+def get_road_distance(start, end, coordinates):
 
     start_lat, start_lon = coordinates[start]
     end_lat, end_lon = coordinates[end]
 
     url = (
-        f"https://router.project-osrm.org/route/v1/driving/"
-        f"{start_lon},{start_lat};{end_lon},{end_lat}"
-        f"?overview=false"
+        "https://router.project-osrm.org/route/v1/driving/"
+        f"{start_lon},{start_lat};"
+        f"{end_lon},{end_lat}"
+        "?overview=false"
     )
 
     try:
@@ -46,38 +96,39 @@ def get_road_distance(start, end):
             url,
             timeout=10
         )
+
+        response.raise_for_status()
 
         data = response.json()
 
         if data["code"] == "Ok":
 
-            distance_km = (
-                data["routes"][0]["distance"] / 1000
+            distance_meters = (
+                data["routes"][0]["distance"]
             )
 
-            return distance_km
+            return distance_meters / 1000
 
     except Exception:
-
         pass
 
-    # Fallback if OSRM is unavailable
     return 10.0
 
 
-# ============================================================
-# GET ACTUAL ROAD GEOMETRY FROM OSRM
-# ============================================================
+# =========================================================
+# ROAD GEOMETRY
+# =========================================================
 
-def get_road_geometry(start, end):
+def get_road_geometry(start, end, coordinates):
 
     start_lat, start_lon = coordinates[start]
     end_lat, end_lon = coordinates[end]
 
     url = (
-        f"https://router.project-osrm.org/route/v1/driving/"
-        f"{start_lon},{start_lat};{end_lon},{end_lat}"
-        f"?overview=full&geometries=geojson"
+        "https://router.project-osrm.org/route/v1/driving/"
+        f"{start_lon},{start_lat};"
+        f"{end_lon},{end_lat}"
+        "?overview=full&geometries=geojson"
     )
 
     try:
@@ -86,6 +137,8 @@ def get_road_geometry(start, end):
             url,
             timeout=10
         )
+
+        response.raise_for_status()
 
         data = response.json()
 
@@ -95,30 +148,26 @@ def get_road_geometry(start, end):
                 data["routes"][0]["geometry"]["coordinates"]
             )
 
-            # OSRM returns:
-            # [longitude, latitude]
-
             return [
                 (latitude, longitude)
-                for longitude, latitude in route_coordinates
+                for longitude, latitude
+                in route_coordinates
             ]
 
     except Exception:
-
         pass
 
-    # Fallback to straight line
     return [
         coordinates[start],
         coordinates[end]
     ]
 
 
-# ============================================================
-# CREATE ROAD DISTANCE MATRIX
-# ============================================================
+# =========================================================
+# CREATE DISTANCE MATRIX
+# =========================================================
 
-def create_distance_matrix():
+def create_distance_matrix(locations, coordinates):
 
     matrix = []
 
@@ -136,10 +185,10 @@ def create_distance_matrix():
 
                 distance = get_road_distance(
                     start,
-                    end
+                    end,
+                    coordinates
                 )
 
-                # Convert km → metres
                 row.append(
                     int(distance * 1000)
                 )
@@ -149,73 +198,79 @@ def create_distance_matrix():
     return matrix
 
 
-# ============================================================
-# ROUTE OPTIMIZATION
-# ============================================================
+# =========================================================
+# OPEN ROUTE OPTIMIZATION
+# =========================================================
 
 def optimize_route(
+    locations,
+    coordinates,
     traffic,
     weather,
     delay_probability
 ):
 
-    # Get actual road distances
-    distance_matrix = create_distance_matrix()
+    if len(locations) < 2:
+
+        return [], 0
 
 
-    # --------------------------------------------------------
+    # =====================================================
+    # REAL ROAD DISTANCES
+    # =====================================================
+
+    distance_matrix = create_distance_matrix(
+        locations,
+        coordinates
+    )
+
+
+    # =====================================================
     # TRAFFIC FACTORS
-    # --------------------------------------------------------
+    # =====================================================
 
     traffic_factor = {
-
-        "Low": 1.0,
-
+        "Low": 1.00,
         "Medium": 1.15,
-
         "High": 1.35
-
     }
 
 
-    # --------------------------------------------------------
+    # =====================================================
     # WEATHER FACTORS
-    # --------------------------------------------------------
+    # =====================================================
 
     weather_factor = {
-
-        "Clear": 1.0,
-
+        "Clear": 1.00,
         "Cloudy": 1.08,
-
         "Rainy": 1.20
-
     }
 
 
     traffic_multiplier = traffic_factor.get(
         traffic,
-        1.0
+        1.00
     )
+
 
     weather_multiplier = weather_factor.get(
         weather,
-        1.0
+        1.00
     )
 
 
-    # --------------------------------------------------------
-    # DELAY RISK FACTOR
-    # --------------------------------------------------------
+    # =====================================================
+    # AI RISK FACTOR
+    # =====================================================
 
     risk_multiplier = (
         1 + (delay_probability * 0.10)
     )
 
 
-    # --------------------------------------------------------
-    # ADJUST DISTANCE MATRIX
-    # --------------------------------------------------------
+    # =====================================================
+    # ADJUST DISTANCE
+    # =====================================================
 
     adjusted_matrix = []
 
@@ -226,12 +281,10 @@ def optimize_route(
         for distance in row:
 
             adjusted_distance = (
-
                 distance
                 * traffic_multiplier
                 * weather_multiplier
                 * risk_multiplier
-
             )
 
             adjusted_row.append(
@@ -243,18 +296,55 @@ def optimize_route(
         )
 
 
-    # ========================================================
-    # OR-TOOLS ROUTING MODEL
-    # ========================================================
+    # =====================================================
+    # ADD DUMMY END NODE
+    # =====================================================
+    #
+    # This is the important part.
+    #
+    # The vehicle starts at location 0
+    # (warehouse/pickup).
+    #
+    # It must visit every delivery.
+    #
+    # The dummy node acts as the END.
+    #
+    # Therefore the vehicle does NOT need
+    # to travel back to the warehouse.
+    #
+    # =====================================================
+
+    number_of_locations = len(locations)
+
+    dummy_node = number_of_locations
+
+    expanded_matrix = []
+
+    for i in range(number_of_locations):
+
+        row = adjusted_matrix[i].copy()
+
+        # Zero cost to finish at dummy node
+        row.append(0)
+
+        expanded_matrix.append(row)
+
+
+    # Dummy node row
+    expanded_matrix.append(
+        [0] * (number_of_locations + 1)
+    )
+
+
+    # =====================================================
+    # OR-TOOLS
+    # =====================================================
 
     manager = pywrapcp.RoutingIndexManager(
-
-        len(locations),
-
+        number_of_locations + 1,
         1,
-
-        0
-
+        [0],
+        [dummy_node]
     )
 
 
@@ -263,9 +353,9 @@ def optimize_route(
     )
 
 
-    # --------------------------------------------------------
+    # =====================================================
     # DISTANCE CALLBACK
-    # --------------------------------------------------------
+    # =====================================================
 
     def distance_callback(
         from_index,
@@ -280,7 +370,7 @@ def optimize_route(
             to_index
         )
 
-        return adjusted_matrix[
+        return expanded_matrix[
             from_node
         ][
             to_node
@@ -299,9 +389,9 @@ def optimize_route(
     )
 
 
-    # --------------------------------------------------------
+    # =====================================================
     # SEARCH PARAMETERS
-    # --------------------------------------------------------
+    # =====================================================
 
     search_parameters = (
         pywrapcp.DefaultRoutingSearchParameters()
@@ -309,17 +399,14 @@ def optimize_route(
 
 
     search_parameters.first_solution_strategy = (
-
-        routing_enums_pb2
-        .FirstSolutionStrategy
+        routing_enums_pb2.FirstSolutionStrategy
         .PATH_CHEAPEST_ARC
-
     )
 
 
-    # ========================================================
+    # =====================================================
     # SOLVE
-    # ========================================================
+    # =====================================================
 
     solution = routing.SolveWithParameters(
         search_parameters
@@ -332,39 +419,44 @@ def optimize_route(
 
         index = routing.Start(0)
 
+        total_cost = 0
+
 
         while not routing.IsEnd(index):
 
-            node_index = (
-                manager.IndexToNode(index)
+            node_index = manager.IndexToNode(
+                index
             )
 
-            route.append(
-                locations[node_index]
-            )
+
+            # Ignore dummy node
+            if node_index < number_of_locations:
+
+                route.append(
+                    locations[node_index]
+                )
+
+
+            previous_index = index
+
 
             index = solution.Value(
                 routing.NextVar(index)
             )
 
 
-        # Return to warehouse
-        route.append(
-            locations[
-                manager.IndexToNode(index)
-            ]
-        )
-
-
-        total_cost = (
-            solution.ObjectiveValue()
-            / 1000
-        )
+            total_cost += (
+                routing.GetArcCostForVehicle(
+                    previous_index,
+                    index,
+                    0
+                )
+            )
 
 
         return (
             route,
-            round(total_cost, 2)
+            round(total_cost / 1000, 2)
         )
 
 
